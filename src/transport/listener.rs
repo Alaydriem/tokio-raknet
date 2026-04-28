@@ -99,6 +99,7 @@ pub struct RaknetListener {
     )>,
     outbound_tx: mpsc::Sender<super::OutboundMsg>,
     advertisement: Arc<RwLock<Vec<u8>>>,
+    mux_handler: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl RaknetListener {
@@ -128,7 +129,7 @@ impl RaknetListener {
         let (outbound_tx, outbound_rx) = mpsc::channel(1024);
         let advertisement = Arc::new(RwLock::new(config.advertisement.clone()));
 
-        tokio::spawn(run_listener_muxer(
+        let mux_handler = tokio::spawn(run_listener_muxer(
             socket,
             config,
             new_conn_tx,
@@ -141,6 +142,7 @@ impl RaknetListener {
             new_connections: new_conn_rx,
             outbound_tx,
             advertisement,
+            mux_handler: Some(mux_handler),
         })
     }
 
@@ -173,6 +175,50 @@ impl RaknetListener {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+}
+
+impl Drop for RaknetListener {
+    fn drop(&mut self) {
+        if let Some(handle) = self.mux_handler.take() {
+            handle.abort();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_mux_handler_is_spawned() {
+        let listener = RaknetListener::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .expect("failed to bind listener");
+
+        assert!(listener.mux_handler.is_some());
+        assert!(!listener.mux_handler.as_ref().unwrap().is_finished());
+    }
+
+    #[tokio::test]
+    async fn test_drop_aborts_mux_handler() {
+        let listener = RaknetListener::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .expect("failed to bind listener");
+
+        let abort_handle = listener.mux_handler.as_ref().unwrap().abort_handle();
+        assert!(!abort_handle.is_finished());
+
+        drop(listener);
+
+        // Wait for abort to propagate
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !abort_handle.is_finished() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
     }
 }
 

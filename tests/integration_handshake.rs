@@ -12,29 +12,7 @@ async fn test_basic_handshake_and_exchange() {
 
     println!("Server listening on {}", local_addr);
 
-    // 2. Spawn the server accept loop
-    let server_handle = tokio::spawn(async move {
-        // Accept one connection
-        let mut conn = timeout(Duration::from_secs(5), listener.accept())
-            .await
-            .expect("timeout waiting for connection")
-            .expect("listener closed unexpectedly");
-
-        println!("Server accepted connection from {}", conn.peer_addr());
-
-        // Wait for a packet
-        let packet = conn
-            .recv()
-            .await
-            .expect("connection closed")
-            .expect("Failed to read.");
-        assert_eq!(packet, "hello server");
-
-        // Send a reply
-        conn.send("hello client".as_bytes()).await.unwrap();
-    });
-
-    // 3. Client connects to the server
+    // 2. Spawn the client so it runs concurrently
     let client_handle = tokio::spawn(async move {
         // Give server a moment to bind (though not strictly needed with await)
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -58,8 +36,25 @@ async fn test_basic_handshake_and_exchange() {
         assert_eq!(reply, "hello client");
     });
 
-    // 4. Wait for both to finish
-    let (server_res, client_res) = tokio::join!(server_handle, client_handle);
-    server_res.unwrap();
-    client_res.unwrap();
+    // 3. Accept and handle the connection in the main task so the listener stays alive
+    let mut conn = timeout(Duration::from_secs(5), listener.accept())
+        .await
+        .expect("timeout waiting for connection")
+        .expect("listener closed unexpectedly");
+
+    println!("Server accepted connection from {}", conn.peer_addr());
+
+    // Wait for a packet
+    let packet = conn
+        .recv()
+        .await
+        .expect("connection closed")
+        .expect("Failed to read.");
+    assert_eq!(packet, "hello server");
+
+    // Send a reply
+    conn.send("hello client".as_bytes()).await.unwrap();
+
+    // 4. Wait for the client to finish
+    client_handle.await.unwrap();
 }

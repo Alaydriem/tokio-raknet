@@ -176,6 +176,17 @@ impl RaknetListener {
             .unwrap_or_else(|e| e.into_inner())
             .clone()
     }
+
+    /// Returns a clone of the shared advertisement handle.
+    ///
+    /// The returned `Arc<RwLock<Vec<u8>>>` is the *same* buffer the listener's
+    /// muxer reads when replying to `UnconnectedPing`/`OpenConnections`. Writing
+    /// to it (or calling [`Self::set_advertisement`]) live-updates the pong
+    /// payload, so a background task can refresh the advert without owning the
+    /// listener (which `accept` borrows mutably).
+    pub fn advertisement_handle(&self) -> Arc<RwLock<Vec<u8>>> {
+        self.advertisement.clone()
+    }
 }
 
 impl Drop for RaknetListener {

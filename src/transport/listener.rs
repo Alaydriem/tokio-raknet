@@ -103,6 +103,22 @@ pub struct RaknetListener {
 }
 
 impl RaknetListener {
+    /// Bind the underlying UDP socket, enabling dual-stack for IPv6 binds
+    fn bind_udp(addr: SocketAddr) -> std::io::Result<std::net::UdpSocket> {
+        use socket2::{Domain, Protocol, Socket, Type};
+
+        if !addr.is_ipv6() {
+            return std::net::UdpSocket::bind(addr);
+        }
+
+        let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
+        if let Err(e) = socket.set_only_v6(false) {
+            tracing::warn!("dual-stack unavailable on {addr}: {e}; IPv4 peers will be refused");
+        }
+        socket.bind(&addr.into())?;
+        Ok(socket.into())
+    }
+
     /// Binds a new listener to the specified address using default configuration.
     pub async fn bind(addr: SocketAddr) -> std::io::Result<Self> {
         Self::bind_with_config(addr, RaknetListenerConfig::default()).await
@@ -113,7 +129,7 @@ impl RaknetListener {
         addr: SocketAddr,
         config: RaknetListenerConfig,
     ) -> std::io::Result<Self> {
-        let socket = std::net::UdpSocket::bind(addr)?;
+        let socket = Self::bind_udp(addr)?;
         socket.set_nonblocking(true)?;
 
         // if let Some(size) = config.socket_recv_buffer_size {
